@@ -4,12 +4,13 @@
 #include <stdlib.h>
 #include "sqlite.h"
 #include <ctype.h>
+#include <fcntl.h>
 
 #define MAX_PAGES 100
 #define PAGE_SIZE 4096
 #define INT_SIZE 4
 #define STRING_SIZE 256
-
+#define NEWLINE "\n"
 
 typedef enum {SELECT , INSERT, META, CREATE}StatementType;
 typedef enum {EXIT, TABLE}MetaType;
@@ -178,6 +179,32 @@ void deserialize(Row *destination, void *source, Table *table)
 	}
 }
 
+/*
+    table name
+    column titles and data types
+    then until EOF, each line is a row
+*/
+
+void write_to_disk(Table *table){
+    int fd = open("data.txt", O_RDWR);
+    if (fd == -1){
+        printf("error in write_to_disk\n");
+    }
+    write(fd, table->name, strlen(table->name));
+}
+
+void read_from_disk(){
+    char buf[1000];
+    int fd = open("data.txt", O_RDONLY);
+    if (fd == -1)
+    {
+        printf("error in read_from_disk\n");
+    }
+    read(fd, buf, sizeof(buf));
+    write(STDOUT_FILENO, buf, strlen(buf));
+    write(STDOUT_FILENO, NEWLINE, 1);
+}
+
 void print_row(Row *row)
 {
 	int i = 0;
@@ -185,7 +212,7 @@ void print_row(Row *row)
 
 	while(row->data[i] != NULL)
 	{
-		printf(" %s ", (char *)row->data[i]->data);
+		printf("%s\t", (char *)row->data[i]->data);
 
 
 		//strcpy(buf+1, (char *)row->data[i]->data);
@@ -235,6 +262,7 @@ MetaResult meta_command(Statement *statement, Table *table)
 	//if (strncmp(buffer, ".exit", len-1) == 0)
 	if (statement->m_type == EXIT)
 	{
+	    write_to_disk(table);
 		exit(0);
 	}
 	//tables (show current tables
@@ -248,7 +276,7 @@ MetaResult meta_command(Statement *statement, Table *table)
 		}
 		int i;
 		int j = table->number_of_columns;
-		printf("table name: %s\n", table->name);
+		printf("\ntable name: %s\n\n", table->name);
 		for (i = 0; i < j; i++)
 		{
 			print_col(table->columns[i]);
@@ -257,7 +285,7 @@ MetaResult meta_command(Statement *statement, Table *table)
 		}
 		printf("\n");
 
-
+                printf("\t");
                 for (i = 0; i < table->row_number; i++)
                 {
                         Row *row = (Row *)malloc(sizeof(Row));
@@ -265,7 +293,7 @@ MetaResult meta_command(Statement *statement, Table *table)
                         deserialize(row, row_slot(table, i), table);
                         print_row(row);
                 }
-		printf("\n");
+		printf("\n\n");
 
 		return META_SUCCESS;
 	}
@@ -311,7 +339,7 @@ PrepareResult prepare_statement(char *buffer, int len, Statement *statement, Tab
 		char* data_type = (char *)malloc(100);
 		while (subtoken != NULL) //I want to iterate over an arbitrary number of columns
 		{
-			trim(subtoken);
+		    memset(column_name, 0, 100);
 			token_helper(subtoken, column_name, data_type);
 			printf("subtoken: %s\n", subtoken);
 			printf("column name : %s\n", column_name);
@@ -319,7 +347,7 @@ PrepareResult prepare_statement(char *buffer, int len, Statement *statement, Tab
 			statement->columns[i] = (Column *)malloc(sizeof(Column));
 			statement->columns[i]->name = malloc(strlen(column_name));
 			strcpy(statement->columns[i]->name, column_name);
-			if (strcmp(data_type, "int") == 0)
+			if (strncmp(data_type, "int", 3) == 0)
 			{
 				//statement->columns[i]->type = (DataType *)malloc(sizeof(DataType));
 				statement->columns[i]->type = INT;
@@ -392,21 +420,22 @@ PrepareResult prepare_statement(char *buffer, int len, Statement *statement, Tab
 	return PREPARE_UNRECOGNIZED;
 }
 
-void trim(char *str)
-{
-	while(*str && isspace((unsigned char)*str))
-	{
-		str++;
-	}
-}
 
 
 void token_helper(char *str, char* column_name, char* data_type)
 {
-	int i = 0;
+    //get rid of leading spaces!
+  	int i = 0;
+
+    if (str[0] == ' '){
+        while(str[i] == ' '){
+            i++;
+        }
+    }
+    int n = 0;
 	while(str[i] != ' ')
 	{
-	 	column_name[i] = str[i];
+	 	column_name[n++] = str[i];
 		i++;
 	}
 	i++;
@@ -443,7 +472,9 @@ ExecuteResult execute_statement(Statement *statement, Table *table)
 	}
 	else if (statement->type == SELECT)
 	{
+	    printf("\n\n\t%s\n\t________\n\n", table->name);
 		int i;
+		printf("\t");
 		for (i = 0; i < table->row_number; i++)
 		{
 			Row *row = (Row *)malloc(sizeof(Row));
@@ -453,6 +484,7 @@ ExecuteResult execute_statement(Statement *statement, Table *table)
 			deserialize(row, row_slot(table, i), table);
 			print_row(row);
 		}
+		printf("\n\n");
 	}
 	//printf("ID: %d\n", statement->row_to_insert.id);
 	return EXECUTE_SUCCESS;
@@ -460,6 +492,7 @@ ExecuteResult execute_statement(Statement *statement, Table *table)
 
 int main()
 {
+    read_from_disk();
 	Table *table = malloc(sizeof(Table));
 	Statement *statement = malloc(sizeof(Statement));
 	statement->columns = (Column **)malloc(sizeof(Column *) * 10); //support 10 columns
